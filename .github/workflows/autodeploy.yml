@@ -1,0 +1,33 @@
+name: Coolify Auto-Update Check
+on:
+  schedule:
+    - cron: '0 * * * *' # Chạy mỗi giờ (phút 0)
+  workflow_dispatch:      # Cho phép bấm chạy tay trên UI GitHub
+
+jobs:
+  check-updates:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install regctl & jq
+        run: |
+          sudo apt-get update && sudo apt-get install -y jq
+          curl -L https://github.com/regclient/regclient/releases/latest/download/regctl-linux-amd64 > regctl
+          chmod +x regctl
+          sudo mv regctl /usr/local/bin/
+
+      - name: Run Check and Deploy
+        env:
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          COOLIFY_URL: ${{ secrets.COOLIFY_URL }}
+        run: bash check_and_deploy.sh
+
+      - name: Commit state changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add state_*.txt
+          git diff --quiet && git diff --staged --quiet || git commit -m "Update image digests [skip ci]"
+          git push
