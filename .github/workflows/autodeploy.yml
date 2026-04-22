@@ -1,45 +1,56 @@
 name: Coolify Auto-Update Check
 on:
   schedule:
-    - cron: '0 * * * *'
-  workflow_dispatch:
+    - cron: '0 * * * *' # Chạy tự động mỗi giờ một lần
+  workflow_dispatch:      # Cho phép bạn bấm nút chạy thủ công bất cứ lúc nào
 
 jobs:
   check-updates:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write # Cần quyền này để commit file apps_state.json.enc ngược lại repo
 
     steps:
-      - name: Checkout Repo
+      - name: Checkout Tool Repo
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0 # Lấy toàn bộ lịch sử để tránh lỗi khi pull/rebase
 
       - name: Install regctl
         run: |
+          # Cài đặt công cụ regctl để kiểm tra Image Digest từ Docker Registry
           curl -L -s https://github.com/regclient/regclient/releases/latest/download/regctl-linux-amd64 > regctl
           chmod +x regctl
           sudo mv regctl /usr/local/bin/
 
       - name: Run Update Script
         env:
+          # Các thông tin nhạy cảm lấy từ GitHub Secrets
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
           COOLIFY_URL: ${{ secrets.COOLIFY_URL }}
           MY_CONFIG_PAT: ${{ secrets.MY_CONFIG_PAT }}
           CONFIG_URL: ${{ secrets.CONFIG_URL }}
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-        run: bash check_and_deploy.sh
+        run: |
+          # Chạy script xử lý chính
+          bash check_and_deploy.sh
 
       - name: Commit & Push Changes
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          if [[ -n $(git status --porcelain apps_state.json) ]]; then
-            git add apps_state.json
-            git commit -m "chore: update image digests [skip ci]"
+          
+          # Chỉ làm việc với file đã mã hóa (.enc)
+          # Xóa file thô apps_state.json nếu nó lỡ xuất hiện để đảm bảo an toàn
+          [ -f "apps_state.json" ] && rm -f apps_state.json
+          
+          # Kiểm tra xem file mã hóa có thay đổi nội dung không
+          if [[ -n $(git status --porcelain apps_state.json.enc) ]]; then
+            echo "🚀 State changed, committing updates..."
+            git add apps_state.json.enc
+            git commit -m "chore: update encrypted state [skip ci]"
             git pull --rebase origin main
             git push -q
           else
-            echo "No changes."
+            echo "✅ No changes in image digests. Nothing to commit."
           fi
