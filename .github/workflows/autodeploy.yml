@@ -1,8 +1,8 @@
 name: Coolify Auto-Update Check
 on:
   schedule:
-    - cron: '0 * * * *' # Chạy mỗi giờ một lần
-  workflow_dispatch:      # Cho phép chạy tay
+    - cron: '0 * * * *'
+  workflow_dispatch:
 
 jobs:
   check-updates:
@@ -28,19 +28,18 @@ jobs:
           COOLIFY_URL: ${{ secrets.COOLIFY_URL }}
           MY_CONFIG_PAT: ${{ secrets.MY_CONFIG_PAT }}
           CONFIG_URL: ${{ secrets.CONFIG_URL }}
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }} # Thêm dòng này
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: bash check_and_deploy.sh
 
       - name: Commit & Push Changes
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          
           if [[ -n $(git status --porcelain apps_state.json) ]]; then
             git add apps_state.json
             git commit -m "chore: update image digests [skip ci]"
             git pull --rebase origin main
             git push -q
           else
-            echo "No updates to commit."
+            echo "No changes."
           fi
