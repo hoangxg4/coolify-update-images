@@ -1,23 +1,27 @@
 name: Coolify Auto-Update Check
 on:
   schedule:
-    - cron: '0 * * * *'
-  workflow_dispatch:
+    - cron: '0 * * * *' # Chạy tự động mỗi giờ (phút 0)
+  workflow_dispatch:      # Cho phép bấm nút chạy thủ công
 
 jobs:
   check-updates:
     runs-on: ubuntu-latest
-    # Thêm permissions để chắc chắn có quyền ghi
     permissions:
-      contents: write
-      
+      contents: write # Quyền bắt buộc để ghi file apps_state.json
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Lấy toàn bộ lịch sử để tránh lỗi commit
+          fetch-depth: 0
 
-      - name: Install Tools
+      - name: Masking Secrets
+        run: |
+          echo "::add-mask::${{ secrets.COOLIFY_URL }}"
+          echo "::add-mask::${{ secrets.COOLIFY_TOKEN }}"
+
+      - name: Install regctl
         run: |
           curl -L -s https://github.com/regclient/regclient/releases/latest/download/regctl-linux-amd64 > regctl
           chmod +x regctl
@@ -27,6 +31,7 @@ jobs:
         env:
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
           COOLIFY_URL: ${{ secrets.COOLIFY_URL }}
+          REGISTRIES_CONF: ${{ secrets.REGISTRIES_CONF }}
         run: bash check_and_deploy.sh
 
       - name: Commit & Push Changes
@@ -34,13 +39,12 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           
-          # Kiểm tra xem file có thay đổi không
+          # Chỉ commit nếu có sự thay đổi trong file state
           if [[ -n $(git status --porcelain apps_state.json) ]]; then
             git add apps_state.json
             git commit -m "chore: update image digests [skip ci]"
-            # Pull trước khi push để tránh lỗi diverged branches
             git pull --rebase origin main
             git push -q
           else
-            echo "No changes in digests. Skipping push."
+            echo "No changes in image digests. Skipping push."
           fi
