@@ -9,22 +9,21 @@ send_discord_notification() {
   local app_id=$1
   if [ -n "$DISCORD_WEBHOOK" ]; then
     local message="🚀 **Coolify Update Detected**\n**App ID:** \`${app_id}\`\n**Status:** Deployment Triggered Successfully!"
-    curl -s -H "Content-Type: application/json" \
-         -X POST \
-         -d "{\"content\": \"$message\"}" \
-         "$DISCORD_WEBHOOK" > /dev/null
+    curl -s -H "Content-Type: application/json" -X POST -d "{\"content\": \"$message\"}" "$DISCORD_WEBHOOK" > /dev/null
   fi
 }
 
-# 1. Tải file cấu hình (Giữ nguyên logic cũ)
+# 1. Tải file cấu hình từ Repo Private
 if [ -n "$CONFIG_URL" ] && [ -n "$MY_CONFIG_PAT" ]; then
-    curl -s -L -o "$TEMP_CONFIG" -H "Authorization: token $MY_CONFIG_PAT" "$CONFIG_URL"
-    CONFIG_FILE="$TEMP_CONFIG"
+    echo "🌐 Downloading private config..."
+    status_code=$(curl -s -L -o "$TEMP_CONFIG" -w "%{http_code}" -H "Authorization: token $MY_CONFIG_PAT" "$CONFIG_URL")
+    [ "$status_code" -eq 200 ] && CONFIG_FILE="$TEMP_CONFIG" || echo "⚠️ Could not download config (HTTP $status_code)"
 fi
 
-# 2. Đăng nhập Registry (Giữ nguyên logic cũ)
+# 2. Đăng nhập Registry
 if [ -f "$CONFIG_FILE" ]; then
-    jq -c '.[]' "$CONFIG_FILE" | while read -r reg; do
+    echo "🔑 Authenticating..."
+    jq -c '.[]' "$CONFIG_FILE" 2>/dev/null | while read -r reg; do
         server=$(echo "$reg" | jq -r '.server')
         user=$(echo "$reg" | jq -r '.user')
         pass=$(echo "$reg" | jq -r '.pass')
@@ -35,11 +34,20 @@ fi
 
 [ ! -f "$STATE_FILE" ] && echo "{}" > "$STATE_FILE"
 
-# 3. Lấy danh sách app
-apps=$(curl -s -H "Authorization: Bearer $COOLIFY_TOKEN" "$COOLIFY_URL/api/v1/applications")
+# 3. Lấy danh sách app (Bổ sung kiểm tra lỗi)
+echo "🔍 Fetching applications from Coolify..."
+response=$(curl -s -w "\n%{http_code}" -H "Authorization: Bearer $COOLIFY_TOKEN" "$COOLIFY_URL/api/v1/applications")
+http_status=$(echo "$response" | tail -n1)
+apps=$(echo "$response" | sed '$d')
 
-# 4. Duyệt và Kiểm tra
-echo "$apps" | jq -c '.[]' | while read -r app; do
+if [ "$http_status" != "200" ]; then
+    echo "❌ API Error: Coolify returned HTTP $http_status"
+    echo "Response: $apps" # Sẽ hiện lỗi để bạn debug (nhưng GitHub sẽ mask nếu trúng token)
+    exit 1
+fi
+
+# 4. Duyệt và Kiểm tra Update
+echo "$apps" | jq -c '.[]' 2>/dev/null | while read -r app; do
     uuid=$(echo "$app" | jq -r '.uuid')
     image=$(echo "$app" | jq -r '.docker_registry_image_name')
     tag=$(echo "$app" | jq -r '.docker_registry_image_tag')
@@ -53,24 +61,25 @@ echo "$apps" | jq -c '.[]' | while read -r app; do
             old_digest=$(jq -r ".[\"$uuid\"] // empty" "$STATE_FILE")
 
             if [ -z "$old_digest" ]; then
+                echo "📌 Syncing state for ${uuid:0:8}"
                 tmp=$(mktemp)
                 jq ".[\"$uuid\"] = \"$remote_digest\"" "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
                 continue
             fi
 
             if [ "$remote_digest" != "$old_digest" ]; then
-                status=$(curl -s -o /dev/null -w "%{http_code}" \
+                echo "🚀 New version for ${uuid:0:8}. Deploying..."
+                deploy_status=$(curl -s -o /dev/null -w "%{http_code}" \
                     -H "Authorization: Bearer $COOLIFY_TOKEN" \
                     "$COOLIFY_URL/api/v1/deploy?uuid=$uuid&force=true")
 
-                if [ "$status" == "200" ]; then
-                    # Cập nhật state
+                if [ "$deploy_status" == "200" ]; then
                     tmp=$(mktemp)
                     jq ".[\"$uuid\"] = \"$remote_digest\"" "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
-                    # GỬI THÔNG BÁO DISCORD
                     send_discord_notification "${uuid:0:8}"
                 fi
             fi
         fi
     fi
 done
+echo "✅ Finished."
