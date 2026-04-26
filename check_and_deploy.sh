@@ -6,6 +6,7 @@ STATE_FILE_ENC="apps_state.json.enc"
 TEMP_CONFIG="remote_registries.json"
 
 echo "::add-mask::$COOLIFY_URL"
+echo "::add-mask::$COOLIFY_TOKEN"
 
 # --- Hàm gửi thông báo Discord ---
 send_discord_notification() {
@@ -13,9 +14,7 @@ send_discord_notification() {
   local p_uuid=$6; local e_uuid=$7
   local time=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
   
-  # Sử dụng cấu trúc số ít /environment/ chuẩn của UI
   local dashboard_link="${COOLIFY_URL}/project/${p_uuid}/environment/${e_uuid}/application/${uuid}"
-  
   local fqdn_link="N/A"
   [[ -n "$fqdn" && "$fqdn" != "null" ]] && fqdn_link="🌐 [Visit Site]($fqdn)"
 
@@ -62,12 +61,21 @@ if [ -f "$CONFIG_FILE" ]; then
     done
 fi
 
-# 3. Xây dựng Map Project/Environment (Dùng printf & pipe thẳng để tránh lỗi JSON parse)
+# 3. Xây dựng Map Project/Environment
 echo "📡 Mapping Project structure..."
 MAP_FILE=$(mktemp)
 echo "[]" > "$MAP_FILE"
 
-curl -s -H "Authorization: Bearer $COOLIFY_TOKEN" "$COOLIFY_URL/api/v1/projects" | jq -c '.[]' | while read -r project; do
+PROJECTS_RES=$(curl -s -H "Authorization: Bearer $COOLIFY_TOKEN" "$COOLIFY_URL/api/v1/projects")
+
+# Kiểm tra xem API có lỗi không (phản hồi có phải là mảng JSON không)
+if ! printf "%s" "$PROJECTS_RES" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    echo "❌ Lỗi: Không thể lấy danh sách Projects. Phản hồi từ Server:"
+    printf "%s\n" "$PROJECTS_RES"
+    exit 1
+fi
+
+printf "%s" "$PROJECTS_RES" | jq -c '.[]' | while read -r project; do
     p_uuid=$(printf "%s" "$project" | jq -r '.uuid')
     
     envs_raw=$(curl -s -H "Authorization: Bearer $COOLIFY_TOKEN" "$COOLIFY_URL/api/v1/projects/$p_uuid/environments")
@@ -78,7 +86,15 @@ done
 
 # 4. Kiểm tra Updates và Trigger Deploy
 echo "🔍 Scanning for applications updates..."
-curl -s -H "Authorization: Bearer $COOLIFY_TOKEN" "$COOLIFY_URL/api/v1/applications" | jq -c '.[]' | while read -r app; do
+APPS_RES=$(curl -s -H "Authorization: Bearer $COOLIFY_TOKEN" "$COOLIFY_URL/api/v1/applications")
+
+if ! printf "%s" "$APPS_RES" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    echo "❌ Lỗi: Không thể lấy danh sách Applications. Phản hồi từ Server:"
+    printf "%s\n" "$APPS_RES"
+    exit 1
+fi
+
+printf "%s" "$APPS_RES" | jq -c '.[]' | while read -r app; do
     uuid=$(printf "%s" "$app" | jq -r '.uuid')
     name=$(printf "%s" "$app" | jq -r '.name')
     image=$(printf "%s" "$app" | jq -r '.docker_registry_image_name')
@@ -94,7 +110,6 @@ curl -s -H "Authorization: Bearer $COOLIFY_TOKEN" "$COOLIFY_URL/api/v1/applicati
             old_digest=$(jq -r ".[\"$uuid\"] // empty" "$STATE_FILE")
             
             if [ "$remote_digest" != "$old_digest" ]; then
-                # Lấy UUID Map từ file tạm
                 p_uuid=$(jq -r --arg eid "$env_id" '.[] | select(.id == ($eid|tonumber)) | .p_uuid' "$MAP_FILE" | head -n 1)
                 e_uuid=$(jq -r --arg eid "$env_id" '.[] | select(.id == ($eid|tonumber)) | .e_uuid' "$MAP_FILE" | head -n 1)
 
@@ -106,7 +121,7 @@ curl -s -H "Authorization: Bearer $COOLIFY_TOKEN" "$COOLIFY_URL/api/v1/applicati
                     send_discord_notification "$uuid" "$name" "$image" "$tag" "$fqdn" "$p_uuid" "$e_uuid"
                     echo "   ✅ Success!"
                 else
-                    echo "   ❌ Deploy failed with status: $status"
+                    echo "   ❌ Deploy failed with HTTP status: $status"
                 fi
             fi
         fi
