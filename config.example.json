@@ -28,6 +28,7 @@
   },
   "compose": {
     "enabled": true,
+    "filter_templates": true,
     "services": []
   }
 }

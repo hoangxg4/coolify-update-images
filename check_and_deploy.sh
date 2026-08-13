@@ -65,6 +65,7 @@ GIT_APPS_RAW="[]"
 GIT_TOKENS_JSON="{}"
 COMPOSE_ENABLED="true"
 COMPOSE_SERVICES_RAW="[]"
+COMPOSE_FILTER_TEMPLATES="true"
 if [ -f "${CONFIG_FILE:-}" ]; then
     GIT_ENABLED=$(jq -r 'if .git.enabled? == false then "false" else "true" end' "$CONFIG_FILE" 2>/dev/null || true)
     GIT_MODE=$(jq -r '.git.mode? // "commit"' "$CONFIG_FILE" 2>/dev/null || true)
@@ -72,6 +73,7 @@ if [ -f "${CONFIG_FILE:-}" ]; then
     GIT_TOKENS_JSON=$(jq -c '.git.tokens? // {}' "$CONFIG_FILE" 2>/dev/null || true)
     COMPOSE_ENABLED=$(jq -r 'if .compose.enabled? == false then "false" else "true" end' "$CONFIG_FILE" 2>/dev/null || true)
     COMPOSE_SERVICES_RAW=$(jq -c '.compose.services? // []' "$CONFIG_FILE" 2>/dev/null || true)
+    COMPOSE_FILTER_TEMPLATES=$(jq -r 'if .compose.filter_templates? == false then "false" else "true" end' "$CONFIG_FILE" 2>/dev/null || true)
     [ -z "$GIT_APPS_RAW" ] && GIT_APPS_RAW="[]"
     [ -z "$GIT_TOKENS_JSON" ] && GIT_TOKENS_JSON="{}"
     [ -z "$COMPOSE_SERVICES_RAW" ] && COMPOSE_SERVICES_RAW="[]"
@@ -197,12 +199,13 @@ if [ "$COMPOSE_ENABLED" == "true" ]; then
         [ "$svc_name" == "null" ] && svc_name="$svc_uuid"
 
         # Chỉ xử lý: uuid trong whitelist (nếu có), hoặc service tùy biến (service_type == null)
+        # COMPOSE_FILTER_TEMPLATES=true: lọc bỏ template/marketplace service (service_type != null)
         if [ "$COMPOSE_SERVICES_RAW" != "[]" ]; then
             in_whitelist=$(printf "%s" "$COMPOSE_SERVICES_RAW" | jq -r --arg u "$svc_uuid" 'index($u) != null' 2>/dev/null || true)
             if [ "$in_whitelist" != "true" ]; then
                 continue
             fi
-        else
+        elif [ "$COMPOSE_FILTER_TEMPLATES" == "true" ]; then
             [ "$svc_type" != "null" ] && continue
         fi
 
